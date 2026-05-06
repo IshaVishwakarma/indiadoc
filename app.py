@@ -76,7 +76,7 @@ if question:
 
             try:
                 response = requests.post(
-                    "https://indiadoc.onrender.com",
+                    "https://indiadoc.onrender.com/query",
                     json={
                         "question": question,
                         "document": selected_doc
