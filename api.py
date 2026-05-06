@@ -15,38 +15,41 @@ class QueryRequest(BaseModel):
     question: str
     document: Optional[str] = None
 
+# 🔥 GLOBAL LOAD (ONLY ONCE)
+print("🔹 Loading embeddings...")
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
+)
+
+print("🔹 Checking vectorstore...")
+if not os.path.exists("vectorstore"):
+    print("❌ vectorstore missing!")
+    db = None
+else:
+    print("🔹 Loading vectorstore...")
+    db = FAISS.load_local(
+        "vectorstore",
+        embeddings,
+        allow_dangerous_deserialization=True
+    )
+    print("✅ Vectorstore loaded")
+
+# 🔥 LLM INIT ONCE
+llm = ChatGroq(
+    model_name="llama-3.1-8b-instant",
+    temperature=0
+)
+
 
 @app.post("/query")
 def query_docs(request: QueryRequest):
     try:
-        print("🔹 Request received")
+        if db is None:
+            return {"answer": "Vectorstore not loaded", "sources": []}
 
-        # 🔥 STEP 1: Initialize embeddings
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
-
-        # 🔥 STEP 2: Check vectorstore exists
-        if not os.path.exists("vectorstore"):
-            return {
-                "answer": "Vectorstore not found on server",
-                "sources": []
-            }
-
-        print("🔹 Loading vectorstore...")
-
-        db = FAISS.load_local(
-            "vectorstore",
-            embeddings,
-            allow_dangerous_deserialization=True
-        )
-
-        print("✅ Vectorstore loaded")
-
-        # 🔥 STEP 3: Normalize query
         query = request.question.lower()
 
-        # 🔥 STEP 4: Auto-detect document
+        # 🔥 Auto detect doc
         if not request.document:
             if "it act" in query:
                 request.document = "it_act.pdf"
@@ -55,69 +58,35 @@ def query_docs(request: QueryRequest):
             elif "rbi" in query:
                 request.document = "rbi_guidelines.pdf"
 
-        # 🔥 STEP 5: Detect penalty query
+        # 🔥 Detect penalty query
         is_penalty_query = any(word in query for word in [
-            "penalty", "penalties", "fine", "punishment"
+            "penalty", "fine", "punishment"
         ])
 
         if is_penalty_query:
-            query += " penalties punishment fine imprisonment section 33"
+            query += " penalty fine imprisonment section 33"
 
-        # 🔥 STEP 6: Retrieval
+        # 🔥 Retrieval
         if request.document:
             docs = db.similarity_search(
                 query,
-                k=8,
+                k=6,
                 filter={"source": request.document}
             )
         else:
             docs = db.max_marginal_relevance_search(
                 query,
-                k=10,
-                fetch_k=40
+                k=6,
+                fetch_k=20
             )
 
-        # 🔥 STEP 7: Remove duplicates
-        seen = set()
-        unique_docs = []
-        for doc in docs:
-            key = (doc.page_content[:100], doc.metadata.get("source"))
-            if key not in seen:
-                seen.add(key)
-                unique_docs.append(doc)
-        docs = unique_docs
-
-        # 🔥 STEP 8: Filter (only for penalty)
-        if is_penalty_query:
-            filtered_docs = [
-                doc for doc in docs
-                if any(keyword in doc.page_content.lower() for keyword in [
-                    "penalty", "penalties", "punishable", "imprisonment", "fine", "section 33"
-                ])
-            ]
-            docs = filtered_docs if filtered_docs else docs
-
-        # 🔥 STEP 9: Build context
+        # 🔥 Build context
         context = "\n\n".join([
-            f"[Document: {doc.metadata.get('source')} | Page: {doc.metadata.get('page')}]\n{doc.page_content}"
-            for doc in docs
+            doc.page_content for doc in docs
         ])
 
-        # 🔥 STEP 10: Prompt
-        instruction = (
-            "Extract ONLY penalty-related information"
-            if is_penalty_query
-            else "Answer clearly in bullet points"
-        )
-
         prompt = f"""
-You are a legal assistant.
-
-STRICT RULES:
-- Use ONLY the provided context
-- Do NOT add external knowledge
-
-{instruction}
+Answer the question based only on context.
 
 Context:
 {context}
@@ -126,32 +95,22 @@ Question:
 {request.question}
 """
 
-        # 🔥 STEP 11: LLM
-        llm = ChatGroq(
-            model_name="llama-3.1-8b-instant",
-            temperature=0
-        )
-
         response = llm.invoke(prompt)
-
-        # 🔥 STEP 12: Sources
-        sources = [
-            {
-                "document": doc.metadata.get("source"),
-                "page": doc.metadata.get("page"),
-                "content": doc.page_content[:200]
-            }
-            for doc in docs[:4]
-        ]
 
         return {
             "answer": response.content,
-            "sources": sources
+            "sources": [
+                {
+                    "document": doc.metadata.get("source"),
+                    "page": doc.metadata.get("page")
+                }
+                for doc in docs
+            ]
         }
 
     except Exception as e:
         print("❌ ERROR:", str(e))
         return {
-            "answer": f"Server error: {str(e)}",
+            "answer": f"Error: {str(e)}",
             "sources": []
         }
