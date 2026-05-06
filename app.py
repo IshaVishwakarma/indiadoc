@@ -76,7 +76,7 @@ if question:
 
             try:
                 response = requests.post(
-                    "http://127.0.0.1:8000/query",
+                    "https://indiadoc.onrender.com",
                     json={
                         "question": question,
                         "document": selected_doc
