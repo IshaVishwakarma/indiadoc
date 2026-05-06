@@ -15,78 +15,49 @@ class QueryRequest(BaseModel):
     question: str
     document: Optional[str] = None
 
-# 🔥 GLOBAL LOAD (ONLY ONCE)
-print("🔹 Loading embeddings...")
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
 
-print("🔹 Checking vectorstore...")
-if not os.path.exists("vectorstore"):
-    print("❌ vectorstore missing!")
-    db = None
-else:
-    print("🔹 Loading vectorstore...")
+# 🔥 LOAD ONLY WHEN NEEDED
+def load_db():
+    print("🔹 Loading embeddings...")
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+    if not os.path.exists("vectorstore"):
+        raise Exception("Vectorstore not found")
+
+    print("🔹 Loading FAISS...")
     db = FAISS.load_local(
         "vectorstore",
         embeddings,
         allow_dangerous_deserialization=True
     )
-    print("✅ Vectorstore loaded")
 
-# 🔥 LLM INIT ONCE
-llm = ChatGroq(
-    model_name="llama-3.1-8b-instant",
-    temperature=0
-)
+    return db
 
 
 @app.post("/query")
 def query_docs(request: QueryRequest):
     try:
-        if db is None:
-            return {"answer": "Vectorstore not loaded", "sources": []}
+        db = load_db()   # 🔥 load inside request
 
         query = request.question.lower()
 
-        # 🔥 Auto detect doc
-        if not request.document:
-            if "it act" in query:
-                request.document = "it_act.pdf"
-            elif "dpdp" in query:
-                request.document = "dpdp.pdf"
-            elif "rbi" in query:
-                request.document = "rbi_guidelines.pdf"
+        docs = db.max_marginal_relevance_search(
+            query,
+            k=5,
+            fetch_k=10
+        )
 
-        # 🔥 Detect penalty query
-        is_penalty_query = any(word in query for word in [
-            "penalty", "fine", "punishment"
-        ])
+        context = "\n\n".join([doc.page_content for doc in docs])
 
-        if is_penalty_query:
-            query += " penalty fine imprisonment section 33"
-
-        # 🔥 Retrieval
-        if request.document:
-            docs = db.similarity_search(
-                query,
-                k=6,
-                filter={"source": request.document}
-            )
-        else:
-            docs = db.max_marginal_relevance_search(
-                query,
-                k=6,
-                fetch_k=20
-            )
-
-        # 🔥 Build context
-        context = "\n\n".join([
-            doc.page_content for doc in docs
-        ])
+        llm = ChatGroq(
+            model_name="llama-3.1-8b-instant",
+            temperature=0
+        )
 
         prompt = f"""
-Answer the question based only on context.
+Answer based only on context.
 
 Context:
 {context}
