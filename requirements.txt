@@ -2,8 +2,6 @@ fastapi
 uvicorn
 langchain
 langchain-community
-langchain-openai
 langchain-groq
-openai
 faiss-cpu
 python-dotenv
