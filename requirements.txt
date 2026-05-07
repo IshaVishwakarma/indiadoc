@@ -1,11 +1,9 @@
 fastapi
 uvicorn
-streamlit
-requests
 langchain
 langchain-community
 langchain-openai
+langchain-groq
 openai
-sentence-transformers
 faiss-cpu
 python-dotenv

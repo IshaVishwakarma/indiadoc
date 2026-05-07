@@ -16,45 +16,49 @@ class QueryRequest(BaseModel):
     document: Optional[str] = None
 
 
-# 🔥 LOAD ONLY WHEN NEEDED (LIGHTWEIGHT)
-def load_db():
-    print("🔹 Using OpenAI embeddings...")
+# 🔥 LOAD EVERYTHING ONCE (FAST + STABLE)
+print("🔹 Initializing embeddings...")
+embeddings = OpenAIEmbeddings()
 
-    embeddings = OpenAIEmbeddings()  # ✅ FIXED
-
-    if not os.path.exists("vectorstore"):
-        raise Exception("Vectorstore not found")
-
-    print("🔹 Loading FAISS...")
-
+print("🔹 Loading vectorstore...")
+if not os.path.exists("vectorstore"):
+    print("❌ vectorstore missing!")
+    db = None
+else:
     db = FAISS.load_local(
         "vectorstore",
         embeddings,
         allow_dangerous_deserialization=True
     )
+    print("✅ vectorstore loaded")
 
-    return db
+print("🔹 Initializing LLM...")
+llm = ChatGroq(
+    model_name="llama-3.1-8b-instant",
+    temperature=0
+)
+
+
+@app.get("/")
+def root():
+    return {"status": "API running"}
 
 
 @app.post("/query")
 def query_docs(request: QueryRequest):
     try:
-        db = load_db()
+        if db is None:
+            return {"answer": "Vectorstore not loaded", "sources": []}
 
         query = request.question.lower()
 
         docs = db.max_marginal_relevance_search(
             query,
-            k=5,
-            fetch_k=10
+            k=4,
+            fetch_k=8
         )
 
         context = "\n\n".join([doc.page_content for doc in docs])
-
-        llm = ChatGroq(
-            model_name="llama-3.1-8b-instant",
-            temperature=0
-        )
 
         prompt = f"""
 Answer based only on context.
