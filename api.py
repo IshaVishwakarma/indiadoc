@@ -22,7 +22,7 @@ class DummyEmbeddings(Embeddings):
 
 
 # 🔥 Load FAISS
-print("Loading vectorstore...")
+print("🔹 Loading vectorstore...")
 db = None
 
 if os.path.exists("vectorstore"):
@@ -31,9 +31,9 @@ if os.path.exists("vectorstore"):
         DummyEmbeddings(),
         allow_dangerous_deserialization=True
     )
-    print("Vectorstore loaded")
+    print("✅ Vectorstore loaded")
 else:
-    print("Vectorstore missing")
+    print("❌ Vectorstore missing")
 
 
 # 🔥 LLM
@@ -43,7 +43,7 @@ llm = ChatGroq(
 )
 
 
-# ✅ ROOT
+# ✅ Health endpoints
 @app.get("/")
 def root():
     return {"status": "ok"}
@@ -56,31 +56,49 @@ def health():
 
 @app.post("/query")
 def query_docs(req: QueryRequest):
-    if db is None:
-        return {"answer": "Vectorstore not found", "sources": []}
+    try:
+        if db is None:
+            return {"answer": "Vectorstore not found", "sources": []}
 
-    # 🔥 STEP 1: Improve retrieval (query expansion)
-    query = req.question.lower() + " definition act law section data protection"
+        # 🔥 STEP 1 — Strong query expansion
+        query = req.question.lower() + """
+        digital personal data protection act 2023 definition meaning objective introduction law india dpdp
+        penalties punishment fine section
+        data security privacy rules obligations
+        """
 
-    docs = db.similarity_search(query, k=5)
+        # 🔥 STEP 2 — Better retrieval (MMR)
+        docs = db.max_marginal_relevance_search(
+            query,
+            k=8,
+            fetch_k=25
+        )
 
-    if not docs:
-        return {"answer": "No relevant information found", "sources": []}
+        if not docs:
+            return {"answer": "No relevant information found", "sources": []}
 
-    # 🔥 STEP 2: Build context with metadata
-    context = "\n\n".join([
-        f"[Document: {d.metadata.get('source')} | Page: {d.metadata.get('page')}]\n{d.page_content}"
-        for d in docs
-    ])
+        # 🔥 STEP 3 — Prioritize early pages (important for definitions)
+        docs = sorted(docs, key=lambda x: x.metadata.get("page", 0))
 
-    # 🔥 STEP 3: Strong prompt (prevents hallucination)
-    prompt = f"""
+        # 🔥 STEP 4 — Build structured context
+        context = "\n\n".join([
+            f"[Document: {d.metadata.get('source')} | Page: {d.metadata.get('page')}]\n{d.page_content}"
+            for d in docs
+        ])
+
+        # 🔥 STEP 5 — Strong anti-hallucination prompt
+        prompt = f"""
 You are a legal assistant.
 
 STRICT RULES:
 - Answer ONLY using the provided context
 - Do NOT guess or assume anything
-- If answer is not found, say: "Not found in document"
+- If exact answer is not present, say: "Not found in document"
+
+INSTRUCTIONS:
+- Prefer definitions and introductory sections
+- Be precise and factual
+- Use bullet points if needed
 
 Context:
 {context}
@@ -88,19 +106,26 @@ Context:
 Question:
 {req.question}
 
-Answer clearly in points:
+Answer:
 """
 
-    response = llm.invoke(prompt)
+        response = llm.invoke(prompt)
 
-    # 🔥 STEP 4: Return sources
-    return {
-        "answer": response.content,
-        "sources": [
-            {
-                "document": d.metadata.get("source"),
-                "page": d.metadata.get("page")
-            }
-            for d in docs
-        ]
-    }
+        # 🔥 STEP 6 — Clean output
+        return {
+            "answer": response.content,
+            "sources": [
+                {
+                    "document": d.metadata.get("source"),
+                    "page": d.metadata.get("page")
+                }
+                for d in docs[:5]
+            ]
+        }
+
+    except Exception as e:
+        print("❌ ERROR:", str(e))
+        return {
+            "answer": "Something went wrong. Please try again.",
+            "sources": []
+        }
