@@ -16,7 +16,7 @@ class QueryRequest(BaseModel):
     document: Optional[str] = None
 
 
-# 🔥 LOAD EVERYTHING ONCE (FAST + STABLE)
+# ✅ LOAD ONCE (important)
 print("🔹 Initializing embeddings...")
 embeddings = OpenAIEmbeddings()
 
@@ -61,7 +61,7 @@ def query_docs(request: QueryRequest):
         context = "\n\n".join([doc.page_content for doc in docs])
 
         prompt = f"""
-Answer based only on context.
+Answer using ONLY the context.
 
 Context:
 {context}
@@ -84,7 +84,6 @@ Question:
         }
 
     except Exception as e:
-        print("❌ ERROR:", str(e))
         return {
             "answer": f"Error: {str(e)}",
             "sources": []
