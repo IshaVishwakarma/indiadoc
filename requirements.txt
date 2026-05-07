@@ -4,7 +4,8 @@ streamlit
 requests
 langchain
 langchain-community
-langchain-groq
+langchain-openai
+openai
 sentence-transformers
 faiss-cpu
 python-dotenv
