@@ -43,7 +43,7 @@ llm = ChatGroq(
 )
 
 
-# ✅ FAST ROOT (VERY IMPORTANT)
+# ✅ ROOT
 @app.get("/")
 def root():
     return {"status": "ok"}
@@ -57,14 +57,50 @@ def health():
 @app.post("/query")
 def query_docs(req: QueryRequest):
     if db is None:
-        return {"answer": "Vectorstore not found"}
+        return {"answer": "Vectorstore not found", "sources": []}
 
-    docs = db.similarity_search(req.question, k=3)
+    # 🔥 STEP 1: Improve retrieval (query expansion)
+    query = req.question.lower() + " definition act law section data protection"
 
-    context = "\n\n".join([d.page_content for d in docs])
+    docs = db.similarity_search(query, k=5)
 
-    response = llm.invoke(
-        f"Answer from context:\n{context}\n\nQ: {req.question}"
-    )
+    if not docs:
+        return {"answer": "No relevant information found", "sources": []}
 
-    return {"answer": response.content}
+    # 🔥 STEP 2: Build context with metadata
+    context = "\n\n".join([
+        f"[Document: {d.metadata.get('source')} | Page: {d.metadata.get('page')}]\n{d.page_content}"
+        for d in docs
+    ])
+
+    # 🔥 STEP 3: Strong prompt (prevents hallucination)
+    prompt = f"""
+You are a legal assistant.
+
+STRICT RULES:
+- Answer ONLY using the provided context
+- Do NOT guess or assume anything
+- If answer is not found, say: "Not found in document"
+
+Context:
+{context}
+
+Question:
+{req.question}
+
+Answer clearly in points:
+"""
+
+    response = llm.invoke(prompt)
+
+    # 🔥 STEP 4: Return sources
+    return {
+        "answer": response.content,
+        "sources": [
+            {
+                "document": d.metadata.get("source"),
+                "page": d.metadata.get("page")
+            }
+            for d in docs
+        ]
+    }
