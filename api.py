@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 from typing import Optional
 import os
 
+# 🔥 NEW IMPORT
+from langchain_core.embeddings import Embeddings
+
 load_dotenv()
 
 app = FastAPI()
@@ -15,22 +18,32 @@ class QueryRequest(BaseModel):
     document: Optional[str] = None
 
 
-# 🔥 LOAD VECTORSTORE ONLY (NO EMBEDDINGS)
+# 🔥 DUMMY EMBEDDINGS (lightweight, no model)
+class DummyEmbeddings(Embeddings):
+    def embed_documents(self, texts):
+        return [[0.0] * 384 for _ in texts]
+
+    def embed_query(self, text):
+        return [0.0] * 384
+
+
 print("🔹 Loading vectorstore...")
 
 if not os.path.exists("vectorstore"):
     print("❌ vectorstore missing!")
     db = None
 else:
+    embeddings = DummyEmbeddings()   # ✅ FIX
+
     db = FAISS.load_local(
         "vectorstore",
-        embeddings=None,   # ✅ KEY FIX (no embedding model)
+        embeddings,
         allow_dangerous_deserialization=True
     )
     print("✅ vectorstore loaded")
 
 
-# 🔥 LOAD LLM (lightweight)
+# 🔥 LLM
 llm = ChatGroq(
     model_name="llama-3.1-8b-instant",
     temperature=0
@@ -50,7 +63,6 @@ def query_docs(request: QueryRequest):
 
         query = request.question.lower()
 
-        # 🔥 retrieval (works without embeddings model)
         docs = db.similarity_search(query, k=4)
 
         context = "\n\n".join([doc.page_content for doc in docs])
