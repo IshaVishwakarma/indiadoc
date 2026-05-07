@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
 from dotenv import load_dotenv
@@ -16,23 +15,22 @@ class QueryRequest(BaseModel):
     document: Optional[str] = None
 
 
-# ✅ LOAD ONCE (important)
-print("🔹 Initializing embeddings...")
-embeddings = OpenAIEmbeddings()
-
+# 🔥 LOAD VECTORSTORE ONLY (NO EMBEDDINGS)
 print("🔹 Loading vectorstore...")
+
 if not os.path.exists("vectorstore"):
     print("❌ vectorstore missing!")
     db = None
 else:
     db = FAISS.load_local(
         "vectorstore",
-        embeddings,
+        embeddings=None,   # ✅ KEY FIX (no embedding model)
         allow_dangerous_deserialization=True
     )
     print("✅ vectorstore loaded")
 
-print("🔹 Initializing LLM...")
+
+# 🔥 LOAD LLM (lightweight)
 llm = ChatGroq(
     model_name="llama-3.1-8b-instant",
     temperature=0
@@ -52,16 +50,13 @@ def query_docs(request: QueryRequest):
 
         query = request.question.lower()
 
-        docs = db.max_marginal_relevance_search(
-            query,
-            k=4,
-            fetch_k=8
-        )
+        # 🔥 retrieval (works without embeddings model)
+        docs = db.similarity_search(query, k=4)
 
         context = "\n\n".join([doc.page_content for doc in docs])
 
         prompt = f"""
-Answer using ONLY the context.
+Answer ONLY from the context.
 
 Context:
 {context}
