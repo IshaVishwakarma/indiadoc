@@ -2,23 +2,17 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
-from dotenv import load_dotenv
-from typing import Optional
-import os
-
 from langchain_core.embeddings import Embeddings
-
-load_dotenv()
+import os
 
 app = FastAPI()
 
 
 class QueryRequest(BaseModel):
     question: str
-    document: Optional[str] = None
 
 
-# 🔥 Dummy embeddings (no model, no memory)
+# 🔥 Dummy embeddings (no model, no cost)
 class DummyEmbeddings(Embeddings):
     def embed_documents(self, texts):
         return [[0.0] * 384 for _ in texts]
@@ -27,20 +21,19 @@ class DummyEmbeddings(Embeddings):
         return [0.0] * 384
 
 
-# 🔥 Load vectorstore ONCE
-print("🔹 Loading vectorstore...")
-
+# 🔥 Load FAISS
+print("Loading vectorstore...")
 db = None
+
 if os.path.exists("vectorstore"):
-    embeddings = DummyEmbeddings()
     db = FAISS.load_local(
         "vectorstore",
-        embeddings,
+        DummyEmbeddings(),
         allow_dangerous_deserialization=True
     )
-    print("✅ vectorstore loaded")
+    print("Vectorstore loaded")
 else:
-    print("❌ vectorstore missing!")
+    print("Vectorstore missing")
 
 
 # 🔥 LLM
@@ -50,61 +43,28 @@ llm = ChatGroq(
 )
 
 
-# ✅ ROOT (Railway health check friendly)
+# ✅ FAST ROOT (VERY IMPORTANT)
 @app.get("/")
 def root():
-    return {"status": "ok", "message": "API is running"}
+    return {"status": "ok"}
 
 
-# ✅ EXTRA HEALTH ENDPOINT (important)
 @app.get("/health")
 def health():
     return {"status": "healthy"}
 
 
 @app.post("/query")
-def query_docs(request: QueryRequest):
-    try:
-        if db is None:
-            return {"answer": "Vectorstore not loaded", "sources": []}
+def query_docs(req: QueryRequest):
+    if db is None:
+        return {"answer": "Vectorstore not found"}
 
-        query = request.question.strip().lower()
+    docs = db.similarity_search(req.question, k=3)
 
-        # 🔥 Retrieval (fast)
-        docs = db.similarity_search(query, k=4)
+    context = "\n\n".join([d.page_content for d in docs])
 
-        if not docs:
-            return {"answer": "No relevant information found.", "sources": []}
+    response = llm.invoke(
+        f"Answer from context:\n{context}\n\nQ: {req.question}"
+    )
 
-        context = "\n\n".join([doc.page_content for doc in docs])
-
-        prompt = f"""
-Answer ONLY from the context.
-
-Context:
-{context}
-
-Question:
-{request.question}
-"""
-
-        # 🔥 LLM call
-        response = llm.invoke(prompt)
-
-        return {
-            "answer": response.content,
-            "sources": [
-                {
-                    "document": doc.metadata.get("source"),
-                    "page": doc.metadata.get("page")
-                }
-                for doc in docs
-            ]
-        }
-
-    except Exception as e:
-        print("❌ ERROR:", str(e))
-        return {
-            "answer": "Something went wrong. Please try again.",
-            "sources": []
-        }
+    return {"answer": response.content}
