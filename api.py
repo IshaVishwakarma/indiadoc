@@ -6,19 +6,19 @@ from dotenv import load_dotenv
 from typing import Optional
 import os
 
-# 🔥 NEW IMPORT
 from langchain_core.embeddings import Embeddings
 
 load_dotenv()
 
 app = FastAPI()
 
+
 class QueryRequest(BaseModel):
     question: str
     document: Optional[str] = None
 
 
-# 🔥 DUMMY EMBEDDINGS (lightweight, no model)
+# 🔥 Dummy embeddings (no model, no memory)
 class DummyEmbeddings(Embeddings):
     def embed_documents(self, texts):
         return [[0.0] * 384 for _ in texts]
@@ -27,20 +27,20 @@ class DummyEmbeddings(Embeddings):
         return [0.0] * 384
 
 
+# 🔥 Load vectorstore ONCE
 print("🔹 Loading vectorstore...")
 
-if not os.path.exists("vectorstore"):
-    print("❌ vectorstore missing!")
-    db = None
-else:
-    embeddings = DummyEmbeddings()   # ✅ FIX
-
+db = None
+if os.path.exists("vectorstore"):
+    embeddings = DummyEmbeddings()
     db = FAISS.load_local(
         "vectorstore",
         embeddings,
         allow_dangerous_deserialization=True
     )
     print("✅ vectorstore loaded")
+else:
+    print("❌ vectorstore missing!")
 
 
 # 🔥 LLM
@@ -50,9 +50,16 @@ llm = ChatGroq(
 )
 
 
+# ✅ ROOT (Railway health check friendly)
 @app.get("/")
 def root():
-    return {"status": "API running"}
+    return {"status": "ok", "message": "API is running"}
+
+
+# ✅ EXTRA HEALTH ENDPOINT (important)
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
 
 
 @app.post("/query")
@@ -61,9 +68,13 @@ def query_docs(request: QueryRequest):
         if db is None:
             return {"answer": "Vectorstore not loaded", "sources": []}
 
-        query = request.question.lower()
+        query = request.question.strip().lower()
 
+        # 🔥 Retrieval (fast)
         docs = db.similarity_search(query, k=4)
+
+        if not docs:
+            return {"answer": "No relevant information found.", "sources": []}
 
         context = "\n\n".join([doc.page_content for doc in docs])
 
@@ -77,6 +88,7 @@ Question:
 {request.question}
 """
 
+        # 🔥 LLM call
         response = llm.invoke(prompt)
 
         return {
@@ -91,7 +103,8 @@ Question:
         }
 
     except Exception as e:
+        print("❌ ERROR:", str(e))
         return {
-            "answer": f"Error: {str(e)}",
+            "answer": "Something went wrong. Please try again.",
             "sources": []
         }
